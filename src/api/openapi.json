@@ -1,0 +1,2150 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Notify",
+    "version": "0.1.0",
+    "description": "Send an **ask** (a message, notification, approval or yes/no question) to enrolled **destinations** (ESP32 devices, webhooks) and get the answer back. The first answer from any destination wins.\n\n- **Start:** `GET /api/destinations` for ids and tags, then `POST /api/asks?wait=30`.\n- **Auth:** `Authorization: Bearer <key>`, or an OAuth token the owner approves.\n- **Agent guide:** [/llms.txt](/llms.txt). **MCP:** `/mcp`. **A2A:** `/.well-known/agent-card.json`."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8795",
+      "description": "This server"
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Destinations",
+      "description": "Where asks go: devices (ESP32s holding a WebSocket) and webhooks. Enroll, list, rename, revoke."
+    },
+    {
+      "name": "Asks",
+      "description": "Messages, notifications, approvals and questions sent to destinations, and their answers."
+    },
+    {
+      "name": "Pairing",
+      "description": "Enroll a device over Wi-Fi: it shows a code, the owner approves it, the device collects its token."
+    },
+    {
+      "name": "Meta",
+      "description": "Health and errors."
+    }
+  ],
+  "externalDocs": {
+    "url": "http://localhost:8795/llms.txt",
+    "description": "Agent guide: concepts, every endpoint with examples, trust and limits, and task playbooks."
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API key per client: `Authorization: Bearer <key>`. People reach the same routes through the single sign-on in front of the site."
+      }
+    },
+    "schemas": {
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok"
+            ]
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "additionalProperties": {},
+        "description": "Up, with the version it runs and what it serves."
+      },
+      "Problem": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri",
+            "description": "URI of the problem type; its last segment is `code`, and it opens a page describing it.",
+            "example": "https://example.aaho.cc/problems/not_found"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "bad_request",
+              "unauthorized",
+              "forbidden",
+              "not_found",
+              "method_not_allowed",
+              "conflict",
+              "gone",
+              "payload_too_large",
+              "unsupported_media_type",
+              "unprocessable",
+              "too_many_requests",
+              "spend_cap",
+              "internal",
+              "upstream",
+              "unavailable"
+            ],
+            "description": "Stable machine-readable code. Branch on this, not on `title`."
+          },
+          "title": {
+            "type": "string",
+            "description": "Short, human summary of the problem type.",
+            "example": "Not found"
+          },
+          "status": {
+            "type": "integer",
+            "description": "The HTTP status, repeated for convenience.",
+            "example": 404
+          },
+          "detail": {
+            "type": "string",
+            "description": "What went wrong this time and what to do next.",
+            "example": "No screen 5d6a… in snapshot 2026-10-31."
+          },
+          "instance": {
+            "type": "string",
+            "description": "The request id; quote it when reporting a bug.",
+            "example": "req_01J…"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "in": {
+                  "type": "string",
+                  "enum": [
+                    "path",
+                    "query",
+                    "header",
+                    "body"
+                  ]
+                },
+                "path": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "message"
+              ]
+            },
+            "description": "For `bad_request`: every invalid field, where it is (`in`) and why."
+          }
+        },
+        "required": [
+          "type",
+          "code",
+          "title",
+          "status"
+        ],
+        "additionalProperties": {},
+        "description": "An error, as RFC 9457 problem details (`application/problem+json`)."
+      },
+      "DestinationList": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          },
+          "_embedded": {
+            "type": "object",
+            "properties": {
+              "destinations": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Destination"
+                }
+              }
+            },
+            "required": [
+              "destinations"
+            ]
+          }
+        },
+        "required": [
+          "count",
+          "_links",
+          "_embedded"
+        ],
+        "description": "Destinations, the newest first."
+      },
+      "Links": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/components/schemas/Link"
+        },
+        "description": "HAL `_links`: relation name → link. `self` is always present; follow links instead of building URLs.",
+        "example": {
+          "self": {
+            "href": "https://example.aaho.cc/api/v1/apps/123"
+          }
+        }
+      },
+      "Link": {
+        "type": "object",
+        "properties": {
+          "href": {
+            "type": "string",
+            "format": "uri",
+            "description": "Absolute URL to follow.",
+            "example": "https://example.aaho.cc/api/v1/apps/123"
+          },
+          "title": {
+            "type": "string",
+            "description": "What is at the other end, in a few words."
+          },
+          "templated": {
+            "type": "boolean",
+            "description": "True when `href` is a URI template (RFC 6570) to fill in first."
+          },
+          "type": {
+            "type": "string",
+            "description": "Media type of the target when it is not HAL JSON (an image, Markdown)."
+          }
+        },
+        "required": [
+          "href"
+        ],
+        "description": "A HAL link."
+      },
+      "Destination": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Its id: use it in an ask's `to`.",
+            "example": "dst_Xq3v9KpL2mAa"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "device",
+              "webhook"
+            ],
+            "description": "`device`: an ESP32 holding a WebSocket. `webhook`: a URL asks are POSTed to."
+          },
+          "name": {
+            "type": "string",
+            "example": "Desk display"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ask `to: [\"tag:<tag>\"]` reaches every active destination carrying it.",
+            "example": [
+              "desk",
+              "home"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Webhook: where asks are POSTed. Null for devices.",
+            "example": null
+          },
+          "online": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Device: holds a connection now. Null for webhooks.",
+            "example": true
+          },
+          "lastSeenAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Device: when it last connected or sent a frame.",
+            "example": "2026-11-07T14:02:11.000Z"
+          },
+          "lastStatus": {
+            "description": "Device: the last status frame it sent, as sent.",
+            "example": null
+          },
+          "revokedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set once deleted: a revoked destination gets no asks and its token stops working.",
+            "example": null
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-11-07T13:58:00.000Z"
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "tags",
+          "url",
+          "online",
+          "lastSeenAt",
+          "revokedAt",
+          "createdAt",
+          "_links"
+        ],
+        "description": "Somewhere asks go: a device or a webhook. Its token or secret is never shown again after creation."
+      },
+      "DestinationCreated": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Destination"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "token": {
+                "type": "string",
+                "description": "Device only, shown once: the bearer token the device connects with. Put it on the device; it cannot be read again.",
+                "example": "dtk_q8G2…"
+              },
+              "secret": {
+                "type": "string",
+                "description": "Webhook only, shown once: the HMAC-SHA256 key behind `X-Notify-Signature` on every POST to it.",
+                "example": "whsec_V1n…"
+              }
+            }
+          }
+        ],
+        "description": "The new destination, with its device token or webhook secret: the only time either is shown."
+      },
+      "DestinationInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "device"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "description": "What the owner calls it.",
+                "example": "Desk display"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+                  "example": "desk"
+                },
+                "maxItems": 10,
+                "description": "Up to 10 tags, so asks can go to `tag:<tag>`.",
+                "example": [
+                  "desk"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "webhook"
+                ]
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "description": "What the owner calls it.",
+                "example": "Desk display"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+                  "example": "desk"
+                },
+                "maxItems": 10,
+                "description": "Up to 10 tags, so asks can go to `tag:<tag>`.",
+                "example": [
+                  "desk"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "pattern": "^https?:\\/\\/",
+                "description": "Where asks are POSTed, signed.",
+                "example": "https://n8n.example.com/webhook/notify"
+              }
+            },
+            "required": [
+              "kind",
+              "name",
+              "url"
+            ]
+          }
+        ],
+        "description": "A device (answers with its token) or a webhook with its URL (answers with its signing secret)."
+      },
+      "DestinationPatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "What the owner calls it.",
+            "example": "Desk display"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "example": "desk"
+            },
+            "maxItems": 10,
+            "description": "Up to 10 tags, so asks can go to `tag:<tag>`.",
+            "example": [
+              "desk"
+            ]
+          }
+        },
+        "description": "A new name, new tags, or both."
+      },
+      "Ask": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "ask_3fJ9qLm2Xw0a"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "message",
+              "notification",
+              "approval",
+              "question"
+            ],
+            "example": "question"
+          },
+          "title": {
+            "type": "string",
+            "example": "Deploy reelandsheet?"
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "3 commits behind"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "Yes",
+              "No"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "answered",
+              "dismissed",
+              "cancelled",
+              "expired"
+            ],
+            "description": "`open` until the first final answer from any destination (`answered`, or `dismissed` for a message/notification), a cancel (`cancelled`), or its ttl (`expired`).",
+            "example": "answered"
+          },
+          "answer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The action label chosen, exactly as sent; null unless `answered`.",
+            "example": "Yes"
+          },
+          "answeredBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The destination that answered or dismissed it.",
+            "example": "dst_Xq3v9KpL2mAa"
+          },
+          "sender": {
+            "type": "string",
+            "description": "The API client that sent it.",
+            "example": "claude-code"
+          },
+          "secondsLeft": {
+            "type": "integer",
+            "description": "Seconds until it expires unanswered (0 once final). The `ttl` you sent is the total; this counts down.",
+            "example": 540
+          },
+          "createdAt": {
+            "type": "string",
+            "example": "2026-11-07T14:02:10.000Z"
+          },
+          "expiresAt": {
+            "type": "string",
+            "example": "2026-11-07T14:12:10.000Z"
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "2026-11-07T14:02:31.000Z"
+          },
+          "callbackUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": null
+          },
+          "deliveries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Delivery"
+            }
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "body",
+          "actions",
+          "status",
+          "answer",
+          "answeredBy",
+          "sender",
+          "secondsLeft",
+          "createdAt",
+          "expiresAt",
+          "finishedAt",
+          "callbackUrl",
+          "deliveries",
+          "_links"
+        ],
+        "description": "A message, notification, approval or question sent to one or more destinations, with its answer once given."
+      },
+      "Delivery": {
+        "type": "object",
+        "properties": {
+          "destinationId": {
+            "type": "string",
+            "example": "dst_Xq3v9KpL2mAa"
+          },
+          "name": {
+            "type": "string",
+            "description": "The destination’s name.",
+            "example": "Desk display"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "device",
+              "webhook"
+            ],
+            "example": "device"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "delivered",
+              "seen",
+              "answered",
+              "dismissed",
+              "retracted",
+              "expired",
+              "failed"
+            ],
+            "description": "`queued → delivered → seen → answered | dismissed | retracted | expired | failed`.",
+            "example": "seen"
+          },
+          "updatedAt": {
+            "type": "string",
+            "example": "2026-11-07T14:02:15.000Z"
+          }
+        },
+        "required": [
+          "destinationId",
+          "name",
+          "kind",
+          "state",
+          "updatedAt"
+        ],
+        "description": "The ask at one destination."
+      },
+      "AskInput": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "minItems": 1,
+            "maxItems": 20,
+            "description": "Destination ids (`dst_…`) and/or `tag:<tag>` (every active destination with that tag). At least one must match.",
+            "example": [
+              "tag:desk"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "message",
+              "notification",
+              "approval",
+              "question"
+            ],
+            "description": "`message` (dismiss only), `notification` (acknowledge only), `approval` (actions default to [\"Approve\",\"Deny\"]), `question` (1–4 actions).",
+            "example": "question"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "At most 40 characters; plain ASCII shows best on devices.",
+            "example": "Deploy reelandsheet?"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 160,
+            "description": "At most 160 characters.",
+            "example": "3 commits behind"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 12
+            },
+            "maxItems": 4,
+            "description": "The buttons: at most 4, each at most 12 characters. Questions need 1–4; approvals default to [\"Approve\",\"Deny\"]; messages and notifications take none.",
+            "example": [
+              "Yes",
+              "No"
+            ]
+          },
+          "ttl": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 86400,
+            "default": 600,
+            "description": "Seconds until it expires unanswered (10–86400, default 600).",
+            "example": 600
+          },
+          "callbackUrl": {
+            "type": "string",
+            "pattern": "^https?:\\/\\/",
+            "description": "POSTed `{id, status, answer, answeredBy}` (signed `X-Notify-Signature`) once the ask is final.",
+            "example": "https://n8n.example.com/webhook/notify-answer"
+          }
+        },
+        "required": [
+          "to",
+          "kind",
+          "title"
+        ],
+        "description": "What to ask, of whom, and for how long."
+      },
+      "AskList": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "asOf": {
+            "type": "string",
+            "description": "When this list was read: the next `updatedSince`.",
+            "example": "2026-11-07T14:02:40.000Z"
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          },
+          "_embedded": {
+            "type": "object",
+            "properties": {
+              "asks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Ask"
+                }
+              }
+            },
+            "required": [
+              "asks"
+            ]
+          }
+        },
+        "required": [
+          "count",
+          "asOf",
+          "_links",
+          "_embedded"
+        ],
+        "description": "Asks, the newest first."
+      },
+      "AnswerResult": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "ignored"
+            ],
+            "description": "`ignored` when the ask was already final (answered elsewhere, cancelled, expired) or the delivery retracted: the answer did not count.",
+            "example": "applied"
+          },
+          "ask": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "open",
+                  "answered",
+                  "dismissed",
+                  "cancelled",
+                  "expired"
+                ]
+              },
+              "answer": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "answer"
+            ]
+          }
+        },
+        "required": [
+          "result",
+          "ask"
+        ],
+        "description": "Whether the answer counted, and the ask’s status after it."
+      },
+      "AnswerInput": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "delivered",
+              "seen",
+              "answered",
+              "dismissed"
+            ],
+            "default": "answered",
+            "description": "Default `answered`. `dismissed` closes a message or notification; `delivered`/`seen` only report progress.",
+            "example": "answered"
+          },
+          "answer": {
+            "type": "string",
+            "maxLength": 12,
+            "description": "For `answered`: one of the ask’s `actions`, exactly.",
+            "example": "Yes"
+          }
+        },
+        "description": "A webhook destination’s answer to the ask it was sent."
+      },
+      "PairingStarted": {
+        "type": "object",
+        "properties": {
+          "pairingId": {
+            "type": "string",
+            "example": "prq_Fj3kQ9mZx2Lp"
+          },
+          "deviceSecret": {
+            "type": "string",
+            "description": "Bearer for polling; shown once.",
+            "example": "prs_…"
+          },
+          "code": {
+            "type": "string",
+            "description": "Show it to the owner; they enter it with POST /api/devices/pair/approve.",
+            "example": "K7M-4QX"
+          },
+          "expiresIn": {
+            "type": "integer",
+            "example": 600
+          },
+          "interval": {
+            "type": "integer",
+            "description": "Seconds between polls.",
+            "example": 5
+          }
+        },
+        "required": [
+          "pairingId",
+          "deviceSecret",
+          "code",
+          "expiresIn",
+          "interval"
+        ],
+        "description": "A pairing in progress: the code to show, and how to poll for the token."
+      },
+      "PairingStart": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "What the device is.",
+            "example": "Spotpear Muma 1.54"
+          },
+          "fw": {
+            "type": "string",
+            "maxLength": 32,
+            "description": "Its firmware version.",
+            "example": "0.5.0"
+          },
+          "hw": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "A hardware id (MAC).",
+            "example": "ac:a7:04:22:90:84"
+          }
+        },
+        "description": "What a device says about itself when it asks to pair."
+      },
+      "PairingApproval": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 9,
+            "description": "The code the device shows; case and the dash don’t matter.",
+            "example": "K7M-4QX"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "What to call the device.",
+            "example": "Desk Muma"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+            },
+            "maxItems": 10,
+            "description": "Tags for asks’ `to: [\"tag:<tag>\"]`.",
+            "example": [
+              "desk"
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "name"
+        ],
+        "description": "The owner approves a code and names the device."
+      },
+      "PairingPoll": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "expired"
+            ],
+            "example": "approved"
+          },
+          "token": {
+            "type": "string",
+            "description": "Once, when approved: the device token (`dtk_…`).",
+            "example": "dtk_…"
+          },
+          "destinationId": {
+            "type": "string",
+            "example": "dst_Xq3v9KpL2mAa"
+          },
+          "connect": {
+            "type": "string",
+            "description": "The WebSocket URL to dial with the token.",
+            "example": "wss://notify.example.com/api/devices/connect"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "description": "Where a pairing stands; the token appears exactly once."
+      },
+      "Root": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "_links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "_links"
+        ],
+        "description": "The API’s collections and guide."
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Health check",
+        "description": "Answers without a key: `ok` while the service can serve, with the version it runs.",
+        "tags": [
+          "Meta"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The service is up.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`unavailable`: The data is still loading or being replaced. Retry after `Retry-After` seconds.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/destinations": {
+      "get": {
+        "operationId": "listDestinations",
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "Destinations",
+        "description": "Every active destination (device or webhook), the newest first, with its id, tags and whether a device is online. Use it to pick `to` for an ask.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "device",
+                "webhook"
+              ],
+              "description": "Only this kind.",
+              "example": "device"
+            },
+            "required": false,
+            "description": "Only this kind.",
+            "name": "kind",
+            "in": "query",
+            "example": "device"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only those carrying this tag.",
+              "example": "desk"
+            },
+            "required": false,
+            "description": "Only those carrying this tag.",
+            "name": "tag",
+            "in": "query",
+            "example": "desk"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Only devices connected now (`true`) or not (`false`); webhooks are left out when given.",
+              "example": "true"
+            },
+            "required": false,
+            "description": "Only devices connected now (`true`) or not (`false`); webhooks are left out when given.",
+            "name": "online",
+            "in": "query",
+            "example": "true"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "default": "false",
+              "description": "Also list deleted (revoked) ones.",
+              "example": "false"
+            },
+            "required": false,
+            "description": "Also list deleted (revoked) ones.",
+            "name": "includeRevoked",
+            "in": "query",
+            "example": "false"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50,
+              "description": "At most this many (1–100, default 50).",
+              "example": 50
+            },
+            "required": false,
+            "description": "At most this many (1–100, default 50).",
+            "name": "limit",
+            "in": "query",
+            "example": 50
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Destinations.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DestinationList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createDestination",
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "Enroll a device or webhook",
+        "description": "Enrolls a destination. A device gets its bearer token, a webhook its signing secret, each shown only in this answer: store it before doing anything else. Answers 201 with its address in `Location`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new destination, with its token or secret.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DestinationCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: The key is valid but may not do this.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Any unique string (a UUID): a retry with the same key and body gets the first answer instead of doing the work twice; the same key with another body is a 422. Kept 24 hours.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ]
+      }
+    },
+    "/api/destinations/{id}": {
+      "get": {
+        "operationId": "getDestination",
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "One destination",
+        "description": "A destination with its tags, whether a device is online now, when it was last seen and its last status frame.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "description": "The destination’s id (`dst_…`).",
+              "example": "dst_Xq3v9KpL2mAa"
+            },
+            "required": true,
+            "description": "The destination’s id (`dst_…`).",
+            "name": "id",
+            "in": "path",
+            "example": "dst_Xq3v9KpL2mAa"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The destination.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Destination"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Nothing at this path or with this id in the current snapshot. Find ids through search or a list, then follow `_links`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateDestination",
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "Rename or retag a destination",
+        "description": "Changes a destination’s name, its tags, or both. Tokens, secrets and URLs don’t change: enroll a new destination instead.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "description": "The destination’s id (`dst_…`).",
+              "example": "dst_Xq3v9KpL2mAa"
+            },
+            "required": true,
+            "description": "The destination’s id (`dst_…`).",
+            "name": "id",
+            "in": "path",
+            "example": "dst_Xq3v9KpL2mAa"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Any unique string (a UUID): a retry with the same key and body gets the first answer instead of doing the work twice; the same key with another body is a 422. Kept 24 hours.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The destination.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Destination"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: The key is valid but may not do this.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Nothing at this path or with this id in the current snapshot. Find ids through search or a list, then follow `_links`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: The change clashes with the current state (a name already taken, a stale If-Match).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "revokeDestination",
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "Revoke a destination",
+        "description": "Revokes a destination for good: its token stops working, a connected device is closed with code 4001 (it stops reconnecting), and its open deliveries are retracted. It stays readable with `revokedAt` set.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "description": "The destination’s id (`dst_…`).",
+              "example": "dst_Xq3v9KpL2mAa"
+            },
+            "required": true,
+            "description": "The destination’s id (`dst_…`).",
+            "name": "id",
+            "in": "path",
+            "example": "dst_Xq3v9KpL2mAa"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: The key is valid but may not do this.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Nothing at this path or with this id in the current snapshot. Find ids through search or a list, then follow `_links`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/asks": {
+      "post": {
+        "operationId": "createAsk",
+        "tags": [
+          "Asks"
+        ],
+        "summary": "Send an ask (and optionally wait for the answer)",
+        "description": "Sends a message, notification, approval or question to destinations (ids or `tag:<tag>`). The first final answer from any of them answers it and retracts it everywhere else. With `?wait=` it holds up to 30 s for that answer: one call to ask and wait; still `open` after it means no answer yet, so wait on `GET /api/asks/{id}?wait=30`. Answers 201 with its address in `Location`. Limited to 60 per hour per API key.",
+        "parameters": [
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 30,
+              "default": 0,
+              "description": "Hold the answer up to this many seconds (0–30) until the ask is final; it then answers at once. Re-call while `status` is still `open`.",
+              "example": 25
+            },
+            "required": false,
+            "description": "Hold the answer up to this many seconds (0–30) until the ask is final; it then answers at once. Re-call while `status` is still `open`.",
+            "name": "wait",
+            "in": "query",
+            "example": 25
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Any unique string (a UUID): a retry with the same key and body gets the first answer instead of doing the work twice; the same key with another body is a 422. Kept 24 hours.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The ask, answered if it was within `wait`.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ask"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`unprocessable`: The request is well formed but can't be applied as sent, e.g. an Idempotency-Key reused with a different body.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`too_many_requests`: Slow down: wait the seconds in `Retry-After`, then retry. `spend_cap`: This operation costs money and its budget is used up. Free operations still work.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listAsks",
+        "tags": [
+          "Asks"
+        ],
+        "summary": "Asks",
+        "description": "Recent asks from every sender, the newest first, each with its status, answer and deliveries. `count` is the size of this page: raise `limit` to see more. Unacknowledged notifications and messages count as `open` too: filter by `kind` to see only pending decisions.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "answered",
+                "dismissed",
+                "cancelled",
+                "expired"
+              ],
+              "description": "Only asks in this status.",
+              "example": "open"
+            },
+            "required": false,
+            "description": "Only asks in this status.",
+            "name": "status",
+            "in": "query",
+            "example": "open"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "message",
+                "notification",
+                "approval",
+                "question"
+              ],
+              "description": "Only asks of this kind.",
+              "example": "approval"
+            },
+            "required": false,
+            "description": "Only asks of this kind.",
+            "name": "kind",
+            "in": "query",
+            "example": "approval"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Only asks created, finished or with a delivery changed after this instant (ISO 8601). Pass the previous answer’s `asOf` to poll for changes.",
+              "example": "2026-11-07T14:00:00.000Z"
+            },
+            "required": false,
+            "description": "Only asks created, finished or with a delivery changed after this instant (ISO 8601). Pass the previous answer’s `asOf` to poll for changes.",
+            "name": "updatedSince",
+            "in": "query",
+            "example": "2026-11-07T14:00:00.000Z"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 80,
+              "description": "Only asks sent with this API client name (each ask’s `sender`).",
+              "example": "claude-code"
+            },
+            "required": false,
+            "description": "Only asks sent with this API client name (each ask’s `sender`).",
+            "name": "sender",
+            "in": "query",
+            "example": "claude-code"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "description": "At most this many (1–100, default 20).",
+              "example": 20
+            },
+            "required": false,
+            "description": "At most this many (1–100, default 20).",
+            "name": "limit",
+            "in": "query",
+            "example": 20
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Asks.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/asks/{id}": {
+      "get": {
+        "operationId": "getAsk",
+        "tags": [
+          "Asks"
+        ],
+        "summary": "One ask (and optionally wait for its answer)",
+        "description": "An ask with its status, answer, who answered and each delivery’s state. With `?wait=` it holds up to 30 s until the ask is final: the way to wait for an answer.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "description": "The ask’s id (`ask_…`).",
+              "example": "ask_3fJ9qLm2Xw0a"
+            },
+            "required": true,
+            "description": "The ask’s id (`ask_…`).",
+            "name": "id",
+            "in": "path",
+            "example": "ask_3fJ9qLm2Xw0a"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 30,
+              "default": 0,
+              "description": "Hold the answer up to this many seconds (0–30) until the ask is final; it then answers at once. Re-call while `status` is still `open`.",
+              "example": 25
+            },
+            "required": false,
+            "description": "Hold the answer up to this many seconds (0–30) until the ask is final; it then answers at once. Re-call while `status` is still `open`.",
+            "name": "wait",
+            "in": "query",
+            "example": 25
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ask.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ask"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Nothing at this path or with this id in the current snapshot. Find ids through search or a list, then follow `_links`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/asks/{id}/cancel": {
+      "post": {
+        "operationId": "cancelAsk",
+        "tags": [
+          "Asks"
+        ],
+        "summary": "Cancel an open ask",
+        "description": "Cancels an open ask: it is retracted from every destination (reason `cancelled`) and the callback fires. A 409 when it is already final.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "description": "The ask’s id (`ask_…`).",
+              "example": "ask_3fJ9qLm2Xw0a"
+            },
+            "required": true,
+            "description": "The ask’s id (`ask_…`).",
+            "name": "id",
+            "in": "path",
+            "example": "ask_3fJ9qLm2Xw0a"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Any unique string (a UUID): a retry with the same key and body gets the first answer instead of doing the work twice; the same key with another body is a 422. Kept 24 hours.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The cancelled ask.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ask"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Nothing at this path or with this id in the current snapshot. Find ids through search or a list, then follow `_links`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`conflict`: The change clashes with the current state (a name already taken, a stale If-Match).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/deliveries/{token}/answer": {
+      "post": {
+        "operationId": "answerDelivery",
+        "tags": [
+          "Asks"
+        ],
+        "summary": "Answer an ask as a webhook destination",
+        "description": "How a webhook destination answers: POST to the `answerUrl` it was sent. Needs no API key; the token in the path is the credential (one per delivery). The first final answer from any destination wins; later ones answer `ignored`.",
+        "security": [],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "description": "From the `answerUrl` in the webhook payload.",
+              "example": "dlt_Zk1…"
+            },
+            "required": true,
+            "description": "From the `answerUrl` in the webhook payload.",
+            "name": "token",
+            "in": "path",
+            "example": "dlt_Zk1…"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Any unique string (a UUID): a retry with the same key and body gets the first answer instead of doing the work twice; the same key with another body is a 422. Kept 24 hours.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Whether it counted.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Nothing at this path or with this id in the current snapshot. Find ids through search or a list, then follow `_links`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`unprocessable`: The request is well formed but can't be applied as sent, e.g. an Idempotency-Key reused with a different body.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/devices/pair": {
+      "post": {
+        "operationId": "startPairing",
+        "tags": [
+          "Pairing"
+        ],
+        "summary": "Start pairing (device)",
+        "description": "Called by a device with no token: answers a code to show the owner and a secret to poll with. No API key. Limited to 10 an hour per client IP.",
+        "security": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingStart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The pairing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`too_many_requests`: Slow down: wait the seconds in `Retry-After`, then retry. `spend_cap`: This operation costs money and its budget is used up. Free operations still work.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Any unique string (a UUID): a retry with the same key and body gets the first answer instead of doing the work twice; the same key with another body is a 422. Kept 24 hours.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ]
+      }
+    },
+    "/api/devices/pair/approve": {
+      "post": {
+        "operationId": "approvePairing",
+        "tags": [
+          "Pairing"
+        ],
+        "summary": "Approve a device’s pairing code",
+        "description": "The owner enters the code a device shows: this enrolls it as a device destination (no token in this answer: the device collects it). Unknown or expired code: 404. Limited to 30 an hour per key.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingApproval"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new destination.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Destination"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Nothing at this path or with this id in the current snapshot. Find ids through search or a list, then follow `_links`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`too_many_requests`: Slow down: wait the seconds in `Retry-After`, then retry. `spend_cap`: This operation costs money and its budget is used up. Free operations still work.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Any unique string (a UUID): a retry with the same key and body gets the first answer instead of doing the work twice; the same key with another body is a 422. Kept 24 hours.",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
+        ]
+      }
+    },
+    "/api/devices/pair/{pairingId}": {
+      "get": {
+        "operationId": "pollPairing",
+        "tags": [
+          "Pairing"
+        ],
+        "summary": "Poll a pairing (device)",
+        "description": "Called by the device every `interval` seconds with `Authorization: Bearer <deviceSecret>`: pending, approved (with the token, once), or expired. After the token was collected: 410. Unknown id or wrong secret: 404.",
+        "security": [],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "description": "From startPairing.",
+              "example": "prq_Fj3kQ9mZx2Lp"
+            },
+            "required": true,
+            "description": "From startPairing.",
+            "name": "pairingId",
+            "in": "path",
+            "example": "prq_Fj3kQ9mZx2Lp"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`Bearer <deviceSecret>` from startPairing.",
+              "example": "Bearer prs_…"
+            },
+            "required": true,
+            "description": "`Bearer <deviceSecret>` from startPairing.",
+            "name": "authorization",
+            "in": "header",
+            "example": "Bearer prs_…"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Where it stands.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingPoll"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`bad_request`: A parameter or the body is invalid. `errors` lists each one with its path; fix them and retry.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`not_found`: Nothing at this path or with this id in the current snapshot. Find ids through search or a list, then follow `_links`.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "`gone`: This existed in an earlier snapshot and was removed.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api": {
+      "get": {
+        "operationId": "getRoot",
+        "tags": [
+          "Meta"
+        ],
+        "summary": "Where to start",
+        "description": "The collections of this API with their links: start here and follow `_links`.",
+        "responses": {
+          "200": {
+            "description": "The collections.",
+            "content": {
+              "application/hal+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Root"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: No valid API key. Send `Authorization: Bearer <key>`; keys are issued per client.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}
