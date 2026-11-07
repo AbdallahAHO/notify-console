@@ -13,7 +13,8 @@
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
-  }
-  // Enable at prod (the token needs Workers Routes Write + Zone Read on its zone), and add the origin to notify's CONSOLE_ORIGINS:
-  // "routes": [{ "pattern": "console.notify.aaho.cloud", "custom_domain": true }]
+  },
+  // The custom domain (the deploy token needs Workers Routes Write + Zone Read on its zone); notify's CONSOLE_ORIGINS
+  // lists it, and Cloudflare Access gates it
+  "routes": [{ "pattern": "console.notify.aaho.cloud", "custom_domain": true }]
 }
