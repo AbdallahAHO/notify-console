@@ -1,0 +1,19 @@
+// notify-console on Cloudflare: a Worker that only serves the built SPA (no script), deep links fall back to index.html.
+// Cloners: change account_id to yours (or delete it to use your `wrangler login`), set the custom domain below, and
+// build with VITE_NOTIFY_API_URL=https://<your notify host>. Put Cloudflare Access in front of the domain.
+// Deploy: `pnpm run deploy` (builds, then `wrangler deploy`).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "notify-console",
+  // Escalay (the owner's account), pinned so a deploy under another wrangler login fails instead of landing elsewhere
+  "account_id": "8767944cf017742f142dba58aea8858d",
+  "compatibility_date": "2026-11-07",
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  }
+  // Enable at prod (the token needs Workers Routes Write + Zone Read on its zone), and add the origin to notify's CONSOLE_ORIGINS:
+  // "routes": [{ "pattern": "console.notify.aaho.cloud", "custom_domain": true }]
+}

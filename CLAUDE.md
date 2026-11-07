@@ -1,0 +1,3 @@
+# notify-console
+
+@AGENTS.md

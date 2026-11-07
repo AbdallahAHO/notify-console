@@ -1,0 +1,11 @@
+# docker compose up -d → http://localhost:8080
+# The notify API must list this origin in CONSOLE_ORIGINS (e.g. http://localhost:8080).
+services:
+  console:
+    build: .
+    image: ghcr.io/abdallahaho/notify-console:latest
+    ports:
+      - "8080:8080"
+    environment:
+      NOTIFY_API_URL: ${NOTIFY_API_URL:-http://localhost:8787}
+    restart: unless-stopped
